@@ -6,7 +6,7 @@ from email import message_from_file
 from urllib.parse import urlparse, parse_qs
 import pandas as pd
 
-def extract_channel(url, raw_source):
+def extract_utm_source(url, raw_source):
     if isinstance(url, str) and url.strip():
         parsed = urlparse(url)
         params = parse_qs(parsed.query)
@@ -43,27 +43,46 @@ def parse_eml_file(filepath):
     text = soup.get_text()
 
     def get_field(label):
-        pattern = rf"{label}:\s*(.*)"
+        # Matches 'Label:', 'Label :', or 'Label\nValue'
+        pattern = rf"{label}\s*:\s*(.*)"
         match = re.search(pattern, text, re.IGNORECASE)
-        return match.group(1).strip() if match else ""
+        if match:
+            val = match.group(1).strip()
+            # Clean trailing line breaks if any
+            return val.split('\n')[0].strip() if val else ""
+        return ""
+
+    # Flexible extraction for Program
+    program = (
+        get_field("Program of Interest") or 
+        get_field("Program") or 
+        get_field("Academic Program") or 
+        get_field("Degree")
+    )
+    
+    if not program:
+        # Fallback check for common keywords in email body
+        for p in ["Business Analytics", "Data Analytics", "Agri-Business", "Supply Chain", "Project Management", "MBA"]:
+            if p.lower() in text.lower():
+                program = f"MBA / Master's ({p})"
+                break
 
     parent_url = get_field("Parent Page URL") or get_field("URL")
     raw_lead_source = get_field("Lead Source")
 
-    data = {
+    return {
         "File Name": os.path.basename(filepath),
         "Subject": msg.get("Subject", ""),
         "Date": msg.get("Date", ""),
         "Student Name": get_field("Name") or get_field("Student Name"),
         "Email Address": get_field("Email") or get_field("Email Address"),
         "Cell Phone": get_field("Phone") or get_field("Cell Phone"),
-        "Program of Interest": get_field("Program of Interest") or get_field("Program") or "Unspecified Program",
-        "Lead Source": extract_channel(parent_url, raw_lead_source),
+        "Program of Interest": program or "General Inquiry",
+        "Lead Source": extract_utm_source(parent_url, raw_lead_source),
         "Parent Page URL": parent_url,
         "Gravity Forms Entry ID": get_field("Entry ID") or get_field("id"),
         "Gravity Forms Lead ID": get_field("Lead ID") or get_field("lid"),
     }
-    return data
 
 def main():
     eml_files = glob.glob("*.eml")
