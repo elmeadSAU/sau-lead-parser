@@ -11,7 +11,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Clean, Modern Studio Styling
+# Custom CSS
 st.markdown("""
 <style>
     .main { background-color: #fafafa; }
@@ -63,7 +63,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Studio Header
 st.markdown("""
 <div class="studio-header">
     <span class="studio-badge">GEMINI 2.5 FLASH</span>
@@ -91,10 +90,13 @@ with st.sidebar:
 filtered_df = df if selected_program == "All Programs" else df[df["Program of Interest"] == selected_program]
 
 # Top Key Performance Indicators
+channel_col = "Acquisition Channel" if "Acquisition Channel" in filtered_df.columns else "Lead Source"
+top_channel = filtered_df[channel_col].mode()[0] if not filtered_df[channel_col].empty else "N/A"
+
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Total Inquiries", f"{len(filtered_df):,}")
 m2.metric("Active Programs", df["Program of Interest"].nunique())
-m3.metric("Primary Channel", df["Lead Source"].mode()[0] if not df["Lead Source"].empty else "N/A")
+m3.metric("Top Campaign Channel", top_channel)
 m4.metric("Conversion Status", "Active Target")
 
 st.markdown("<br>", unsafe_allow_html=True)
@@ -129,15 +131,16 @@ with tab1:
 
     with col_chart2:
         st.markdown("##### Acquisition Channel Breakdown")
-        source_counts = filtered_df["Lead Source"].value_counts().reset_index()
-        source_counts.columns = ["Lead Source", "Count"]
+        
+        source_counts = filtered_df[channel_col].value_counts().reset_index()
+        source_counts.columns = ["Channel", "Count"]
         
         fig_source = px.pie(
             source_counts,
-            names="Lead Source",
+            names="Channel",
             values="Count",
             hole=0.55,
-            color_discrete_sequence=["#1a73e8", "#4285f4", "#8ab4f8", "#aecbfa"]
+            color_discrete_sequence=["#1a73e8", "#34a853", "#fbbc04", "#ea4335", "#4285f4", "#8ab4f8"]
         )
         fig_source.update_layout(
             height=380,
@@ -156,7 +159,7 @@ st.markdown("### 🤖 Gemini AI Studio Console")
 
 user_query = st.text_area(
     "Query Console",
-    placeholder="e.g., Analyze program demand patterns and suggest candidate follow-up strategies.",
+    placeholder="e.g., Analyze campaign acquisition sources and evaluate recruitment marketing efficiency.",
     height=100
 )
 
@@ -172,7 +175,7 @@ if st.button("✨ Run Prompt"):
             Scope: {selected_program}
             Total Leads: {len(filtered_df)}
             Program Demand: {filtered_df['Program of Interest'].value_counts().to_dict()}
-            Sources: {filtered_df['Lead Source'].value_counts().to_dict()}
+            Acquisition Channels: {filtered_df[channel_col].value_counts().to_dict()}
             """
             prompt = f"{summary_context}\n\nTask: Provide executive response for university leadership.\nUser Query: {user_query}"
             

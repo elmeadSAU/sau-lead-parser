@@ -1,98 +1,80 @@
-import email
-from email import policy
-import glob
 import os
+import glob
 import re
-from urllib.parse import parse_qs, urlparse
 from bs4 import BeautifulSoup
+from email import message_from_file
+from urllib.parse import urlparse, parse_qs
 import pandas as pd
 
-def parse_eml_file(file_path):
-    with open(file_path, "rb") as f:
-        msg = email.message_from_binary_file(f, policy=policy.default)
+def extract_channel(url, raw_source):
+    if isinstance(url, str) and url.strip():
+        parsed = urlparse(url)
+        params = parse_qs(parsed.query)
+        if 'utm_source' in params:
+            return params['utm_source'][0].capitalize()
+        if 'utm_medium' in params:
+            return params['utm_medium'][0].capitalize()
+        if 'gclid' in params:
+            return "Google Ads"
+        if 'fbclid' in params:
+            return "Facebook Ads"
+            
+    if isinstance(raw_source, str) and raw_source.strip():
+        return raw_source.strip()
+        
+    return "SAU Web Form"
 
-    # Basic Email Metadata
-    subject = msg.get("subject", "")
-    date_sent = msg.get("date", "")
-
-    # Get HTML body content
-    body_html = ""
+def parse_eml_file(filepath):
+    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+        msg = message_from_file(f)
+    
+    body = ""
     if msg.is_multipart():
         for part in msg.walk():
             if part.get_content_type() == "text/html":
-                body_html = part.get_content()
+                body = part.get_payload(decode=True).decode('utf-8', errors='ignore')
                 break
-            elif part.get_content_type() == "text/plain" and not body_html:
-                body_html = part.get_content()
+            elif part.get_content_type() == "text/plain" and not body:
+                body = part.get_payload(decode=True).decode('utf-8', errors='ignore')
     else:
-        body_html = msg.get_content()
+        body = msg.get_payload(decode=True).decode('utf-8', errors='ignore')
 
-    soup = BeautifulSoup(body_html, "html.parser")
+    soup = BeautifulSoup(body, 'html.parser')
+    text = soup.get_text()
 
-    # Storage dictionary for lead details
+    def get_field(label):
+        pattern = rf"{label}:\s*(.*)"
+        match = re.search(pattern, text, re.IGNORECASE)
+        return match.group(1).strip() if match else ""
+
+    parent_url = get_field("Parent Page URL") or get_field("URL")
+    raw_lead_source = get_field("Lead Source")
+
     data = {
-        "File Name": os.path.basename(file_path),
-        "Subject": subject,
-        "Date Sent": date_sent,
-        "Name": "",
-        "Email": "",
-        "Cell Phone": "",
-        "Receive Texts": "",
-        "Birthdate": "",
-        "Prospective Student Type": "",
-        "Program of Interest": "",
-        "Lead Source": "",
-        "Parent Page URL": "",
-        "GF Entry ID": "",
-        "GF Lead ID": "",
+        "File Name": os.path.basename(filepath),
+        "Subject": msg.get("Subject", ""),
+        "Date": msg.get("Date", ""),
+        "Student Name": get_field("Name") or get_field("Student Name"),
+        "Email Address": get_field("Email") or get_field("Email Address"),
+        "Cell Phone": get_field("Phone") or get_field("Cell Phone"),
+        "Program of Interest": get_field("Program of Interest") or get_field("Program") or "Unspecified Program",
+        "Lead Source": extract_channel(parent_url, raw_lead_source),
+        "Parent Page URL": parent_url,
+        "Gravity Forms Entry ID": get_field("Entry ID") or get_field("id"),
+        "Gravity Forms Lead ID": get_field("Lead ID") or get_field("lid"),
     }
-
-    # Extract tables or field labels from Gravity Forms template
-    # Pattern matching labels in the HTML body
-    labels = {
-        "Name": "Name",
-        "Email": "Email",
-        "Cell Phone": "Cell Phone",
-        "Receive texts?": "Receive Texts",
-        "Birthdate": "Birthdate",
-        "Prospective Student Type": "Prospective Student Type",
-        "Program of Interest": "Program of Interest",
-        "Lead Source": "Lead Source",
-        "Parent Page URL": "Parent Page URL",
-    }
-
-    text_blocks = [text.strip() for text in soup.stripped_strings if text.strip()]
-    
-    for i, block in enumerate(text_blocks):
-        for label, dict_key in labels.items():
-            if block.lower() == label.lower() and i + 1 < len(text_blocks):
-                data[dict_key] = text_blocks[i + 1]
-
-    # Extract Gravity Forms ID parameters from links
-    links = [a.get("href") for a in soup.find_all("a", href=True)]
-    for link in links:
-        if "gf_entries" in link:
-            parsed = urlparse(link)
-            params = parse_qs(parsed.query)
-            data["GF Entry ID"] = params.get("id", [""])[0]
-            data["GF Lead ID"] = params.get("lid", [""])[0]
-            break
-
     return data
 
 def main():
     eml_files = glob.glob("*.eml")
     if not eml_files:
-        print("No .eml files found to process.")
+        print("No .eml files found in current directory.")
         return
 
-    print(f"Processing {len(eml_files)} emails...")
     records = [parse_eml_file(f) for f in eml_files]
-
     df = pd.DataFrame(records)
-    output_filename = "parsed_leads.csv"
-    df.to_csv(output_filename, index=False)
-    print(f"Done! Successfully exported {len(df)} records to '{output_filename}'.")
+    df.to_csv("parsed_leads.csv", index=False)
+    print(f"Successfully processed {len(records)} .eml files into parsed_leads.csv")
 
 if __name__ == "__main__":
     main()
